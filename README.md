@@ -29,7 +29,7 @@ Jaffle Shop's data is split across two systems:
 | Problem                           | Where it comes from                                                 |
 | --------------------------------- | ------------------------------------------------------------------- |
 | Order records contain no revenue  | The application database tracks orders; money lives in Stripe       |
-| Failed payments inflate revenue   | The raw feed includes`fail` attempts alongside `success`        |
+| Failed payments inflate revenue   | The raw feed includes `fail` attempts alongside `success`        |
 | No customer-level view exists     | Order counts and lifetime value have to be recomputed each time    |
 | `status` means different things | The same column name appears in both systems with different domains |
 
@@ -91,7 +91,7 @@ flowchart LR
         direction TB
         stg_cust["stg_jaffle_shop__customers"]
         stg_ord["stg_jaffle_shop__orders"]
-        stg_pay["stg_stripe_payments"]
+        stg_pay["stg_stripe__payments"]
     end
 
     subgraph marts["Marts — tables"]
@@ -169,16 +169,16 @@ stateDiagram-v2
 
 | Model                          | Grain               | Materialization | What it does                                                                                                                                              |
 | ------------------------------ | ------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stg_jaffle_shop__customers` | one customer        | view            | Renames`id` to `customer_id`                                                                                                                          |
-| `stg_jaffle_shop__orders`    | one order           | view            | Renames keys;`status` becomes `order_status` to avoid collision with payment status                                                                   |
-| `stg_stripe_payments`        | one payment attempt | view            | Renames flat source columns; converts`amount` from cents to dollars. Retains failed attempts so downstream models choose their own definition of "paid" |
+| `stg_jaffle_shop__customers` | one customer        | view            | Renames `id` to `customer_id`                                                                                                                          |
+| `stg_jaffle_shop__orders`    | one order           | view            | Renames keys; `status` becomes `order_status` to avoid collision with payment status                                                                   |
+| `stg_stripe__payments`        | one payment attempt | view            | Renames flat source columns; converts `amount` from cents to dollars. Retains failed attempts so downstream models choose their own definition of "paid" |
 
 ### Marts
 
 | Model             | Grain        | Materialization | What it does                                                                                                                                                                                                           |
 | ----------------- | ------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fct_orders`    | one order    | table           | Joins orders to payments and aggregates**only `success` payments** into `amount`, coalescing unpaid orders to `0`                                                                                          |
-| `dim_customers` | one customer | table           | Left-joins customers to their order history to derive`first_order_date`, `most_recent_order_date`, `number_of_orders` and `lifetime_value`. Never-ordered customers are retained with `number_of_orders = 0` |
+| `fct_orders`    | one order    | table           | Joins orders to payments and aggregates **only `success` payments** into `amount`, coalescing unpaid orders to `0`                                                                                          |
+| `dim_customers` | one customer | table           | Left-joins customers to their order history to derive `first_order_date`, `most_recent_order_date`, `number_of_orders` and `lifetime_value`. Never-ordered customers are retained with `number_of_orders = 0` |
 
 The `left join` in `dim_customers` is a deliberate choice: an inner join would silently drop signed-up-but-never-ordered customers, which is exactly the cohort a growth analyst wants to find.
 
@@ -190,8 +190,8 @@ The `left join` in `dim_customers` is a deliberate choice: an inner join would s
 
 | Layer    | Tests | What it protects                                                                                                                                                                                                                                        |
 | -------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sources  | 6     | Primary key integrity on raw`orders`, `customers` and `payment` — catches upstream loader problems before they propagate                                                                                                                         |
-| Staging  | 12    | Uniqueness and not-null on every key, referential integrity from orders to customers and payments to orders, plus`accepted_values` on `order_status`, `payment_status` and `payment_method` to catch new enum values the source starts emitting |
+| Sources  | 6     | Primary key integrity on raw `orders`, `customers` and `payment` — catches upstream loader problems before they propagate                                                                                                                         |
+| Staging  | 12    | Uniqueness and not-null on every key, referential integrity from orders to customers and payments to orders, plus `accepted_values` on `order_status`, `payment_status` and `payment_method` to catch new enum values the source starts emitting |
 | Marts    | 9     | Grain enforcement (`order_id`, `customer_id` unique), non-null revenue and dates, and an `fct_orders` to `dim_customers` relationship test confirming no orphaned orders                                                                        |
 | Singular | 1     | `assert_stg_stripe__payment_total_positive` — a custom SQL assertion that no order has a negative successful-payment total, a business rule no generic test expresses                                                                                |
 
@@ -203,6 +203,8 @@ The `left join` in `dim_customers` is a deliberate choice: an inner join would s
 | `stripe.payment`     | 12 hours   | 24 hours    | `_batched_at`    |
 
 Different thresholds because the pipelines have different cadences — a Stripe export lagging 6 hours is normal, an orders pipeline lagging 6 hours is not.
+
+Note: `dbt source freshness` can report a `warn` on `jaffle_shop.orders`. The public `dbt-tutorial` dataset is refreshed less often than the 6-hour warn threshold, so a warning between loads is expected; only an `error` (over 24 hours) means the source has genuinely stopped arriving. Both `loaded_at_field` values are cast to `timestamp` so the comparison is explicitly in UTC.
 
 ---
 
@@ -223,7 +225,7 @@ dbt-jaffle-shop/
 │   │   └── stripe/
 │   │       ├── _src_stripe.yml
 │   │       ├── _stg_stripe.yml
-│   │       └── stg_stripe_payments.sql
+│   │       └── stg_stripe__payments.sql
 │   └── marts/
 │       ├── _marts.yml
 │       ├── dim_customers.sql
@@ -241,12 +243,12 @@ These are applied consistently across the project — the point of a convention 
 
 | Convention                                     | Example                                                  | Reason                                                                                                |
 | ---------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Staging models named`stg_<source>__<entity>` | `stg_jaffle_shop__orders`                              | Double underscore separates source from entity, so the origin is visible in every downstream`ref()` |
-| Marts prefixed`fct_` / `dim_`              | `fct_orders`, `dim_customers`                        | Grain is legible from the name alone                                                                  |
-| Keys renamed to`<entity>_id`                 | `id` becomes `customer_id`                           | Makes joins self-documenting and`using (customer_id)` safe                                          |
-| Ambiguous columns qualified                    | `status` becomes `order_status` / `payment_status` | Both sources ship a`status` column with different domains                                           |
-| CTEs over subqueries, one CTE per step         | `source` → `renamed` → `final`                   | Each model reads top-to-bottom as a pipeline                                                          |
-| YAML files prefixed with`_`                  | `_stg_jaffle_shop.yml`                                 | Sorts configuration to the top of the directory listing                                               |
+| Staging models named `stg_<source>__<entity>` | `stg_jaffle_shop__orders`                              | Double underscore separates source from entity, so the origin is visible in every downstream `ref()` |
+| Marts prefixed `fct_` / `dim_`              | `fct_orders`, `dim_customers`                        | Grain is legible from the name alone                                                                  |
+| Keys renamed to `<entity>_id`                 | `id` becomes `customer_id`                           | Makes joins self-documenting and `using (customer_id)` safe                                          |
+| Ambiguous columns qualified                    | `status` becomes `order_status` / `payment_status` | Both sources ship a `status` column with different domains                                           |
+| CTEs over subqueries, one CTE per step         | `source` → `renamed` in staging; marts end in `final` | Each model reads top-to-bottom as a pipeline                                                          |
+| YAML files prefixed with `_`                  | `_stg_jaffle_shop.yml`                                 | Sorts configuration to the top of the directory listing                                               |
 | Repeated definitions in docs blocks            | `{{ doc('order_status') }}`                            | One definition, referenced everywhere — no drift between models                                      |
 
 ---
@@ -256,7 +258,8 @@ These are applied consistently across the project — the point of a convention 
 Developed in **dbt Studio** against BigQuery, using the public `dbt-tutorial` dataset.
 
 ```bash
-# 1. Install dbt with your warehouse adapter
+# 1. Install dbt. This project is built with the dbt Fusion engine;
+#    dbt Core with a warehouse adapter also works:
 pip install dbt-bigquery        # or dbt-snowflake / dbt-postgres / dbt-duckdb
 
 # 2. Install packages
@@ -317,7 +320,7 @@ dbt test  --select source:stripe    # only the Stripe source tests
 ## Design decisions and trade-offs
 
 **1. `dim_customers` reads from `fct_orders` rather than from staging.**
-This keeps the aggregation in one place, but it couples two presentation-layer models and risk circular dependency. Facts and dimensions should not depend on each other. The cleaner shape is an intermediate model (`int_customer_orders`) that both marts consume, leaving `fct_orders` and `dim_customers` as siblings. The current version reflects the course build.
+This keeps the aggregation in one place, but it couples two presentation-layer models: a change to `fct_orders` can silently change `dim_customers`. Facts and dimensions should not depend on each other. The cleaner shape is an intermediate model (`int_customer_orders`) that both marts consume, leaving `fct_orders` and `dim_customers` as siblings. The current version reflects the course build.
 
 **2. `lifetime_value` is nullable while `number_of_orders` is not.**
 A customer with no orders gets `number_of_orders = 0` but `lifetime_value = null`. That is intentional — null means "never transacted", which is genuinely different from "spent $0" — but it is the kind of choice that belongs in a column description rather than in a reader's head, so it is documented in `_marts.yml`.

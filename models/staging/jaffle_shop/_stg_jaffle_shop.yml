@@ -3,7 +3,7 @@ version: 2
 models:
   - name: stg_jaffle_shop__orders
     description: >
-      One order per row. staging model over the raw application orders
+      One order per row. Staging model over the raw application orders table.
     columns:
       - name: order_id
         description: PK for order table
@@ -28,8 +28,8 @@ models:
                 values: ['completed', 'shipped', 'placed', 'return_pending', 'returned']
   - name: stg_jaffle_shop__customers
     description: >
-      One unique customer per row. staging model over the raw application
-      customers table
+      One unique customer per row. Staging model over the raw application
+      customers table.
     columns:
       - name: customer_id
         description: PK for customer table
