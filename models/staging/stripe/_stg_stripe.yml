@@ -1,10 +1,10 @@
 version: 2
 
 models:
-  - name: stg_stripe_payments
+  - name: stg_stripe__payments
     description: >
-      One payment attempt per row. staging model over the Stripe payment
-      No filtering is applied here — failed and successful attempts
+      One payment attempt per row. Staging model over the raw Stripe payment
+      table. No filtering is applied here — failed and successful attempts
       are both retained so downstream models can choose their own definition of
       "paid".
     columns:

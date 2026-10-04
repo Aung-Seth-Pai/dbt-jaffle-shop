@@ -11,7 +11,7 @@ payments as (
         order_id,
         payment_status,
         payment_amount
-    from {{ ref('stg_stripe_payments') }}
+    from {{ ref('stg_stripe__payments') }}
 ),
 
 order_payments as (
