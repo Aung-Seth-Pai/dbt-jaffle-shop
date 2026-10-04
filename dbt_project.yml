@@ -39,6 +39,8 @@ models:
   dbt_learning_project:
     staging:
       +materialized: view
-    
+      +static_analysis: strict
+      
     marts:
       +materialized: table
+      +static_analysis: strict
