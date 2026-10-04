@@ -1,5 +1,8 @@
 # Jaffle Shop — dbt Analytics Engineering Project
 
+[![ci](https://github.com/Aung-Seth-Pai/dbt-jaffle-shop/actions/workflows/ci.yml/badge.svg)](https://github.com/Aung-Seth-Pai/dbt-jaffle-shop/actions/workflows/ci.yml)
+[![deploy](https://github.com/Aung-Seth-Pai/dbt-jaffle-shop/actions/workflows/deploy.yml/badge.svg)](https://github.com/Aung-Seth-Pai/dbt-jaffle-shop/actions/workflows/deploy.yml)
+
 A dimensional warehouse built with **dbt** over two source systems: a Postgres application database (`jaffle_shop`) and a Stripe payments export. It takes raw operational tables and turns them into a tested, documented, analytic-ready star schema that answers questions like *what is each customer's lifetime value?* and *how much revenue has actually been collected per order?*
 
 Built while completing **dbt Fundamentals** (dbt Labs), then extended with full column-level documentation, a wider test suite, and source freshness monitoring.
@@ -17,8 +20,9 @@ Built while completing **dbt Fundamentals** (dbt Labs), then extended with full 
 - [Project structure](#project-structure)
 - [Conventions](#conventions)
 - [Running this project](#running-this-project)
+- [CI/CD](#cicd)
 - [Design decisions and trade-offs](#design-decisions-and-trade-offs)
-- [Skills demonstrated](#skills-demonstrated)
+- [Credits](#credits)
 
 ---
 
@@ -171,7 +175,7 @@ stateDiagram-v2
 | ------------------------------ | ------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `stg_jaffle_shop__customers` | one customer        | view            | Renames `id` to `customer_id`                                                                                                                          |
 | `stg_jaffle_shop__orders`    | one order           | view            | Renames keys; `status` becomes `order_status` to avoid collision with payment status                                                                   |
-| `stg_stripe__payments`        | one payment attempt | view            | Renames flat source columns; converts `amount` from cents to dollars. Retains failed attempts so downstream models choose their own definition of "paid" |
+| `stg_stripe__payments`       | one payment attempt | view            | Renames flat source columns; converts `amount` from cents to dollars. Retains failed attempts so downstream models choose their own definition of "paid" |
 
 ### Marts
 
@@ -212,6 +216,11 @@ Note: `dbt source freshness` can report a `warn` on `jaffle_shop.orders`. The pu
 
 ```
 dbt-jaffle-shop/
+├── .github/workflows/
+│   ├── ci.yml                               # Builds and tests every pull request
+│   └── deploy.yml                           # Builds production on merge and on a daily schedule
+├── ci/
+│   └── profiles.yml                         # Connection profile for the workflows; no credentials
 ├── dbt_project.yml                          # Project config; materialization defaults per layer
 ├── packages.yml                             # dbt-labs/codegen for scaffolding YAML and boilerplate SQL
 ├── models/
@@ -241,15 +250,15 @@ dbt-jaffle-shop/
 
 These are applied consistently across the project — the point of a convention is that a reader can predict the next file without opening it.
 
-| Convention                                     | Example                                                  | Reason                                                                                                |
-| ---------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Staging models named `stg_<source>__<entity>` | `stg_jaffle_shop__orders`                              | Double underscore separates source from entity, so the origin is visible in every downstream `ref()` |
-| Marts prefixed `fct_` / `dim_`              | `fct_orders`, `dim_customers`                        | Grain is legible from the name alone                                                                  |
-| Keys renamed to `<entity>_id`                 | `id` becomes `customer_id`                           | Makes joins self-documenting and `using (customer_id)` safe                                          |
-| Ambiguous columns qualified                    | `status` becomes `order_status` / `payment_status` | Both sources ship a `status` column with different domains                                           |
+| Convention                                     | Example                                                      | Reason                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Staging models named `stg_<source>__<entity>` | `stg_jaffle_shop__orders`                                  | Double underscore separates source from entity, so the origin is visible in every downstream `ref()` |
+| Marts prefixed `fct_` / `dim_`              | `fct_orders`, `dim_customers`                            | Grain is legible from the name alone                                                                  |
+| Keys renamed to `<entity>_id`                 | `id` becomes `customer_id`                               | Makes joins self-documenting and `using (customer_id)` safe                                          |
+| Ambiguous columns qualified                    | `status` becomes `order_status` / `payment_status`     | Both sources ship a `status` column with different domains                                           |
 | CTEs over subqueries, one CTE per step         | `source` → `renamed` in staging; marts end in `final` | Each model reads top-to-bottom as a pipeline                                                          |
-| YAML files prefixed with `_`                  | `_stg_jaffle_shop.yml`                                 | Sorts configuration to the top of the directory listing                                               |
-| Repeated definitions in docs blocks            | `{{ doc('order_status') }}`                            | One definition, referenced everywhere — no drift between models                                      |
+| YAML files prefixed with `_`                  | `_stg_jaffle_shop.yml`                                     | Sorts configuration to the top of the directory listing                                               |
+| Repeated definitions in docs blocks            | `{{ doc('order_status') }}`                                | One definition, referenced everywhere — no drift between models                                      |
 
 ---
 
@@ -275,10 +284,11 @@ dbt build
 dbt source freshness
 
 # 6. Generate and serve the docs site, including the lineage graph
+#    (dbt Core only; the Fusion engine does not support these commands yet)
 dbt docs generate && dbt docs serve
 ```
 
-To run locally, add a `default` profile to `~/.dbt/profiles.yml` (this file lives outside the repo and is never committed):
+To run locally, add a `default` profile to `~/.dbt/profiles.yml` (this file lives outside the repo and is never committed; the workflows use the separate `ci/profiles.yml`, described under [CI/CD](#cicd)):
 
 ```yaml
 default:
@@ -297,6 +307,8 @@ default:
 `dataset` is your own sandbox — dbt creates it on first run. It's separate from the `dbt-tutorial` source data, which is read directly via the `database:`/`schema:` pinned in each source's `.yml` file, regardless of your target dataset.
 
 ### Viewing the lineage graph (DAG) locally
+
+This needs dbt Core; the Fusion engine does not support `dbt docs generate` or `dbt docs serve` yet.
 
 `dbt docs generate` builds `target/manifest.json` and `target/catalog.json`; `dbt docs serve` hosts the same docs site dbt Studio embeds, on `http://localhost:8080` by default:
 
@@ -317,6 +329,43 @@ dbt test  --select source:stripe    # only the Stripe source tests
 
 ---
 
+## CI/CD
+
+Two GitHub Actions workflows run the project with the dbt Fusion engine, pinned to the version used locally.
+
+| Workflow | Trigger | Target dataset | Purpose |
+| --- | --- | --- | --- |
+| `ci` | Pull request to `main` | `jaffle_shop_ci` | Builds every model and runs every test before a change can merge |
+| `deploy` | Merge to `main`, daily at 06:00 UTC, manual | `jaffle_shop` | Builds production and reports source freshness |
+
+`main` is protected: changes arrive by pull request and must pass `ci`.
+
+```mermaid
+flowchart LR
+    dev["Feature branch"] --> pr["Pull request"]
+    pr --> ci["ci workflow<br/>dbt build into jaffle_shop_ci"]
+    ci -->|passes| merge["Merge to main"]
+    merge --> deploy["deploy workflow<br/>dbt build into jaffle_shop"]
+    cron["Daily schedule"] --> deploy
+```
+
+### Authentication
+
+No service account keys exist. GitHub Actions authenticates to Google Cloud with Workload Identity Federation: each job presents a short-lived token signed by GitHub, and Google Cloud exchanges it for temporary credentials.
+
+| Service account | Used by | Can write to |
+| --- | --- | --- |
+| `dbt-ci` | Any workflow in this repository | `jaffle_shop_ci` only |
+| `dbt-prod` | Jobs in the `production` environment, which is limited to `main` | `jaffle_shop` only |
+
+Each account holds three roles: BigQuery Job User and BigQuery Read Session User on the project (the second is required by Fusion), and BigQuery Data Editor on its one dataset. Code in a pull request therefore cannot write to production.
+
+The `dbt-prod` trust is bound to the repository's immutable owner and repository IDs, not its name, so a recycled repository name cannot inherit access.
+
+The connection profile used by the workflows is `ci/profiles.yml`. It contains no credentials.
+
+---
+
 ## Design decisions and trade-offs
 
 **1. `dim_customers` reads from `fct_orders` rather than from staging.**
@@ -332,7 +381,7 @@ Staging stays a faithful representation of the source; the `payment_status = 'su
 Views cost nothing to keep fresh and staging is only ever read by marts. Marts are queried repeatedly by BI tools, so the storage is worth the query performance.
 
 **5. Not yet covered.**
-Snapshots for slowly-changing dimensions, incremental materializations, and CI checks on pull requests are the natural next additions. They were out of scope for the fundamentals build, and the current data volume does not justify incremental logic.
+Snapshots for slowly-changing dimensions and incremental materializations are the natural next additions. They were out of scope for the fundamentals build, and the current data volume does not justify incremental logic.
 
 ---
 
