@@ -15,8 +15,11 @@ sources:
               - unique
               - not_null
           - name: user_id
+            description: FK to jaffle_shop.customers
           - name: order_date
+            description: Date the order was placed
           - name: status
+            description: Current state of the order
         config:
           freshness:
             warn_after:
@@ -25,7 +28,7 @@ sources:
             error_after:
               count: 24
               period: hour
-          loaded_at_field: _etl_loaded_at
+          loaded_at_field: "cast(_etl_loaded_at as timestamp)"
       - name: customers
         description: raw customer data
         columns:
@@ -35,4 +38,6 @@ sources:
               - unique
               - not_null
           - name: first_name
+            description: Customer first name
           - name: last_name
+            description: Customer last name
