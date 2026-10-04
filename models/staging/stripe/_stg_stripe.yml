@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_stripe_payments
+    description: >
+      One payment attempt per row. staging model over the Stripe payment
+      No filtering is applied here — failed and successful attempts
+      are both retained so downstream models can choose their own definition of
+      "paid".
+    columns:
+      - name: payment_id
+        description: PK for the payments table.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: FK to stg_jaffle_shop__orders. The order this payment was made against.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_jaffle_shop__orders')
+                field: order_id
+      - name: payment_method
+        description: Instrument used for the payment attempt.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['credit_card', 'coupon', 'bank_transfer', 'gift_card']
+      - name: payment_status
+        description: Outcome of the payment attempt.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['success', 'fail']
+      - name: payment_amount
+        description: Payment amount in dollars, converted from the source value in cents.
+      - name: payment_created_at
+        description: Timestamp the payment was created.
+      - name: _batched_at
+        description: Loader metadata — timestamp the row landed in the warehouse. Used as the source freshness field.

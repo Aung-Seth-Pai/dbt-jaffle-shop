@@ -1,14 +1,31 @@
+version: 2
+
 sources:
   - name: stripe
     database: dbt-tutorial
     schema: stripe
+    description: Payment events exported from Stripe API into warehouse.
     tables:
       - name: payment
+        description: raw payment attempts, one row per payment
         columns:
           - name: id
+            description: PK for payment data
             data_tests:
               - unique
               - not_null
+          - name: orderid
+            description: FK to jaffle_shop.orders
+          - name: paymentmethod
+            description: method used for the payment attempt
+          - name: status
+            description: Outcome of the payment attempt
+          - name: amount
+            description: Payment amount
+          - name: created
+            description: Timestamp the payment was created
+          - name: _batched_at
+            description: Loader metadata used for source freshness checks
         config: 
           freshness:
             warn_after:
