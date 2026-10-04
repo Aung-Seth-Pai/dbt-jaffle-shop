@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: >
+      Order-grain fact table. One row per order, enriched with the total value of
+      successful Stripe payments captured against that order. Failed payments are
+      excluded from `amount`, so this model is the finance-approved source of truth
+      for order revenue.
+    columns:
+      - name: order_id
+        description: PK for the orders fact table.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: FK to dim_customers. The customer who placed the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        description: Date the order was placed.
+        data_tests:
+          - not_null
+      - name: amount
+        description: >
+          Sum of successful payment amounts for the order, in dollars. Coalesced to 0
+          when no successful payment exists, so unpaid orders aggregate cleanly.
+        data_tests:
+          - not_null
+
+  - name: dim_customers
+    description: >
+      Customer-grain dimension table. One row per customer, enriched with
+      first-order / most-recent-order dates, order count and lifetime value derived
+      from fct_orders. Customers who have never ordered are retained with
+      `number_of_orders = 0` and null date fields.
+    columns:
+      - name: customer_id
+        description: PK for the customers dimension.
+        data_tests:
+          - unique
+          - not_null
+      - name: first_name
+        description: Customer first name, as entered in the source application.
+      - name: last_name
+        description: Customer last name, as entered in the source application.
+      - name: first_order_date
+        description: Date of the customer's earliest order. Null if they have never ordered.
+      - name: most_recent_order_date
+        description: Date of the customer's latest order. Null if they have never ordered.
+      - name: number_of_orders
+        description: Lifetime count of orders placed by the customer. 0 for customers with no orders.
+        data_tests:
+          - not_null
+      - name: lifetime_value
+        description: >
+          Sum of `fct_orders.amount` across all of the customer's orders. Null for
+          customers with no orders (intentionally distinct from a true $0 spend).
