@@ -1,0 +1,17 @@
+default:
+  target: ci
+  outputs:
+    ci:
+      type: bigquery
+      method: oauth
+      project: jaffle-shop-505015
+      dataset: jaffle_shop_ci
+      location: US
+      threads: 4
+    prod:
+      type: bigquery
+      method: oauth
+      project: jaffle-shop-505015
+      dataset: jaffle_shop
+      location: US
+      threads: 8
